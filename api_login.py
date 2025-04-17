@@ -93,3 +93,40 @@ def test_login_invalid_user():
     response = client.post("/login", params={"username": "nonexistent", "password": "wrongpass"})
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid credentials"
+
+# Testes de Segurança
+
+def test_sql_injection():
+    response = client.post("/login", params={"username": "' OR 1=1 --", "password": "irrelevant"})
+    assert response.status_code == 401
+
+def test_brute_force_attempt():
+    for i in range(5):
+        response = client.post("/login", params={"username": "bruteuser", "password": f"wrong{i}"})
+        assert response.status_code == 401
+
+
+def test_jwt_manipulation():
+    import base64
+    import json
+    parts = create_token({"sub": "admin"}).split(".")
+    tampered_payload = base64.urlsafe_b64encode(json.dumps({"sub": "hacker", "exp": 9999999999}).encode()).decode().rstrip("=")
+    tampered_token = f"{parts[0]}.{tampered_payload}.{parts[2]}"
+    assert tampered_token != create_token({"sub": "admin"})
+
+
+def test_token_expired():
+    expired_token = jwt.encode({"sub": "expired", "exp": datetime.datetime.utcnow() - datetime.timedelta(hours=1)}, SECRET_KEY, algorithm=ALGORITHM)
+    try:
+        jwt.decode(expired_token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        assert True
+    else:
+        assert False
+
+
+def test_user_enumeration():
+    client.post("/register", params={"username": "enumuser", "password": "pass"})
+    response = client.post("/register", params={"username": "enumuser", "password": "pass"})
+    assert response.status_code == 400
+    assert "User already exists" in response.text
